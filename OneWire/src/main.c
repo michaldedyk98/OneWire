@@ -11,12 +11,13 @@
 #include "DS18B20.h"
 
 void Init_PLL();
+void ROMCodeReceived(const uint8_t * ROMCode);
 
 #define SENSORS_COUNT 2
 
 DS18B20 TempSensors[SENSORS_COUNT] = {
-		{ .DSAddress = { 0x28, 0xFB, 0xC0, 0xFF, 0x08, 0x00, 0x00, 0x78 }, .DSTemperature = 0.0f},
-		{ .DSAddress = { 0x28, 0xBA, 0x25, 0x00, 0x09, 0x00, 0x00, 0x72 }, .DSTemperature = 0.0f},
+		{ .DSAddress = { 0x28, 0xFB, 0xC0, 0xFF, 0x08, 0x00, 0x00, 0x78 }, .DSTemperature = 0.0f}, // Termometr 1
+		{ .DSAddress = { 0x28, 0xBA, 0x25, 0x00, 0x09, 0x00, 0x00, 0x72 }, .DSTemperature = 0.0f}, // Termometr 2
 };
 
 int main(void){
@@ -27,13 +28,19 @@ int main(void){
 	GPIOD->BSRRH = GPIO_BSRR_BS_12 | GPIO_BSRR_BS_13 | GPIO_BSRR_BS_14 | GPIO_BSRR_BS_15; // Wyzeruj PIN12 PIN13 PIN14 PIN15
 	GPIOD->MODER |= GPIO_MODER_MODER12_0 | GPIO_MODER_MODER13_0 | GPIO_MODER_MODER14_0 | GPIO_MODER_MODER15_0; // Ustaw wyjscie na PIN12 PIN13 PIN14 PIN15
 
-	InitSensors(TempSensors, SENSORS_COUNT);
+	DSInitSensors(TempSensors, SENSORS_COUNT);
 
-	StartMeasurement();
+	DSStartMeasurement();
 
-	//SetSensorsResolution(TEMP_9BIT);
+	//DSSetSensorsResolution(TEMP_9BIT);
+
+	//DSGetROMCode(ROMCodeReceived);
 
 	while(1) {}
+}
+
+void ROMCodeReceived(const uint8_t * ROMCode) {
+	// Kod ma 8 bajtow
 }
 
 static void flash_latency(uint32_t frequency)

@@ -12,6 +12,8 @@ void OWireReadEnd(const uint8_t * data, const uint8_t len, const uint8_t ROMCmd,
 void OWireWriteEnd(const uint8_t ROMCmd, const uint8_t DeviceCMD);
 void OWireNoSlaves();
 
+void (*ROMCodeCallback)(const uint8_t *) = 0;
+
 OneWire OWire = { .OWReadEnd = 0, .OWNoSlaves = 0, .OWWriteEnd = 0 };
 DS18B20 * DSTempSensors = 0;
 
@@ -23,7 +25,7 @@ uint8_t DSSkip = 0;
 uint8_t DSActiveSensor = 0;
 uint8_t DSState = DSIdle;
 
-void InitSensors(DS18B20 * TempSensors, uint8_t SensorsCnt) {
+void DSInitSensors(DS18B20 * TempSensors, uint8_t SensorsCnt) {
 	OWInit(&OWire, OWireReadEnd, OWireNoSlaves, OWireWriteEnd);
 
 	SysTick_Config(84000); // Przerwanie co 1 ms
@@ -33,7 +35,7 @@ void InitSensors(DS18B20 * TempSensors, uint8_t SensorsCnt) {
 	DSConversionTime = DSSensorsCnt * 6;
 }
 
-void StartMeasurement(void) {
+void DSStartMeasurement(void) {
 	DSState = DSConvertTemp;
 
 	DSCycleCnt = 0;
@@ -41,13 +43,13 @@ void StartMeasurement(void) {
 	DSSkip = 0;
 }
 
-void SetSensorsResolution(uint8_t resolution) {
+void DSSetSensorsResolution(uint8_t resolution) {
 	DSResolution = resolution;
 
-	UpdateResolution();
+	DSUpdateResolution();
 }
 
-void UpdateResolution(void) {
+void DSUpdateResolution(void) {
 	OWire.OWWriteBuffer[0] = SELECT_SLAVE;
 	for (uint8_t i = 0; i < 8; i++)
 		OWire.OWWriteBuffer[i+1] = DSTempSensors[DSActiveSensor].DSAddress[i];
@@ -55,11 +57,20 @@ void UpdateResolution(void) {
 	OWire.OWWriteBuffer[10] = 0x00;
 	OWire.OWWriteBuffer[11] = 0x00;
 	OWire.OWWriteBuffer[12] = DSResolution;
-	OWire.OWWriteBuffer[13] = SCRATCHPAD_COPY;
 
-	OWire.OWDeviceCmd = SCRATCHPAD_COPY;
-	OWire.OWWriteDataLen = 14;
+	OWire.OWDeviceCmd = SCRATCHPAD_WRITE;
+	OWire.OWWriteDataLen = 13;
 	OWire.OWReadDataLen = 0;
+
+	OWStartCom(&OWire);
+}
+
+void DSGetROMCode(void (*ReadCallback)(const uint8_t * ROMCode)) {
+	ROMCodeCallback = ReadCallback;
+
+	OWire.OWWriteBuffer[0] = READ_ROM;
+	OWire.OWWriteDataLen = 1;
+	OWire.OWReadDataLen = 8;
 
 	OWStartCom(&OWire);
 }
@@ -115,7 +126,23 @@ void SysTick_Handler(void) {
 		} break;
 		case DSSetResolution: {
 			if (DSCycleCnt > TIM_A) {
-				UpdateResolution();
+				DSUpdateResolution();
+
+				DSState = DSIdle;
+			}
+		} break;
+		case DSWriteEEPROM: {
+			if (DSCycleCnt > TIM_A) {
+				OWire.OWWriteBuffer[0] = SELECT_SLAVE;
+				for (uint8_t i = 0; i < 8; i++)
+					OWire.OWWriteBuffer[i+1] = DSTempSensors[DSActiveSensor].DSAddress[i];
+				OWire.OWWriteBuffer[9] = SCRATCHPAD_COPY;
+
+				OWire.OWDeviceCmd = SCRATCHPAD_COPY;
+				OWire.OWWriteDataLen = 10;
+				OWire.OWReadDataLen = 0;
+
+				OWStartCom(&OWire);
 
 				DSState = DSIdle;
 			}
@@ -147,6 +174,8 @@ void OWireReadEnd(const uint8_t * data, const uint8_t len, const uint8_t ROMCmd,
 
 			GPIOD->ODR ^= (1 << 12);
 		}
+	} else if (ROMCmd == READ_ROM) {
+		ROMCodeCallback(data);
 	}
 }
 
@@ -163,21 +192,26 @@ void OWireWriteEnd(const uint8_t ROMCmd, const uint8_t DeviceCmd) {
 				DSActiveSensor++;
 			}
 		} break;
+		case SCRATCHPAD_WRITE: {
+			DSCycleCnt = 0;
+
+			DSState = DSWriteEEPROM;
+		} break;
 		case SCRATCHPAD_COPY: {
 			if (DSActiveSensor == DSSensorsCnt - 1) {
-				StartMeasurement();
+				DSStartMeasurement();
 			} else {
 				DSCycleCnt = 0;
 				DSActiveSensor++;
 
 				DSState = DSSetResolution;
 			}
-		} break;
+		}
 	}
 
 }
 
-void OWireNoSlaves() { // Na linii 1-Wire nie ma zadnego ukladu po
+void OWireNoSlaves() { // Na linii 1-Wire nie ma zadnego ukladu podrzednego
 	GPIOD->BSRRL = (1 << 14);
 }
 

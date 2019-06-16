@@ -36,12 +36,14 @@ typedef enum {
 	DSReadTemp = 2,
 	DSWaitAndConvert = 3,
 	DSWaitAndRead = 4,
-	DSSetResolution = 5
+	DSSetResolution = 5,
+	DSWriteEEPROM = 6
 } DS18B20Routine;
 
-void InitSensors(DS18B20 * TempSensors, uint8_t SensorsCnt);
-void StartMeasurement(void);
-void SetSensorsResolution(uint8_t resolution);
-void UpdateResolution(void);
+void DSInitSensors(DS18B20 * TempSensors, uint8_t SensorsCnt);
+void DSGetROMCode(void (*ReadCallback)(const uint8_t * ROMCode));
+void DSStartMeasurement(void);
+void DSSetSensorsResolution(uint8_t resolution);
+void DSUpdateResolution(void);
 
 #endif /* DS18B20_H_ */
