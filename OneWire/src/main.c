@@ -8,16 +8,16 @@
 #include "../inc/stm32f4xx.h"
 #include "../inc/hdr_rcc.h"
 #include "OneWire.h"
+#include "DS18B20.h"
 
 void Init_PLL();
-void OWireReadEnd(const uint8_t * data, uint8_t len);
-void OWireNoSlaves();
 
-OneWire OWire = { .OWReadEnd = 0, .OWNoSlaves = 0 };
+#define SENSORS_COUNT 2
 
-uint16_t SysCnt = 0;
-uint8_t TempRead = 0;
-volatile float DS18B20Temp = 0.f;
+DS18B20 TempSensors[SENSORS_COUNT] = {
+		{ .DSAddress = { 0x28, 0xFB, 0xC0, 0xFF, 0x08, 0x00, 0x00, 0x78 }, .DSTemperature = 0.0f},
+		{ .DSAddress = { 0x28, 0xBA, 0x25, 0x00, 0x09, 0x00, 0x00, 0x72 }, .DSTemperature = 0.0f},
+};
 
 int main(void){
 	Init_PLL();
@@ -27,83 +27,13 @@ int main(void){
 	GPIOD->BSRRH = GPIO_BSRR_BS_12 | GPIO_BSRR_BS_13 | GPIO_BSRR_BS_14 | GPIO_BSRR_BS_15; // Wyzeruj PIN12 PIN13 PIN14 PIN15
 	GPIOD->MODER |= GPIO_MODER_MODER12_0 | GPIO_MODER_MODER13_0 | GPIO_MODER_MODER14_0 | GPIO_MODER_MODER15_0; // Ustaw wyjscie na PIN12 PIN13 PIN14 PIN15
 
-	SysTick_Config(8400000); // Przerwanie co 100 ms
+	InitSensors(TempSensors, SENSORS_COUNT);
 
-	OWInit(&OWire, OWireReadEnd, OWireNoSlaves);
+	StartMeasurement();
 
-	OWire.OWWriteBuffer[0] = READ_ROM;
-	OWire.OWWriteDataLen = 1;
-	OWire.OWReadDataLen = 8; // ROM sklada sie z 64 bitow
-
-	OWStartCom(&OWire);
+	//SetSensorsResolution(TEMP_9BIT);
 
 	while(1) {}
-}
-
-void SysTick_Handler(void) {
-	GPIOD->ODR ^= (1 << 13);
-
-	if (!TempRead) {
-		OWire.OWWriteBuffer[0] = SELECT_SLAVE;
-		OWire.OWWriteBuffer[1] = 0x28;
-		OWire.OWWriteBuffer[2] = 0xBA;
-		OWire.OWWriteBuffer[3] = 0x25;
-		OWire.OWWriteBuffer[4] = 0x00;
-		OWire.OWWriteBuffer[5] = 0x09;
-		OWire.OWWriteBuffer[6] = 0x00;
-		OWire.OWWriteBuffer[7] = 0x00;
-		OWire.OWWriteBuffer[8] = 0x72;
-		OWire.OWWriteBuffer[9] = TEMP_CONV;
-
-		OWire.OWWriteDataLen = 10;
-		OWire.OWReadDataLen = 0;
-
-		TempRead = 1;
-
-		OWStartCom(&OWire);
-	}
-
-	if (SysCnt >= 5) { // Odczyt temperatury co 500 ms, choc dla 12 bitow powinno sie czekac 750 ms
-		if (TempRead) {
-			OWire.OWWriteBuffer[0] = SELECT_SLAVE;
-			OWire.OWWriteBuffer[1] = 0x28;
-			OWire.OWWriteBuffer[2] = 0xBA;
-			OWire.OWWriteBuffer[3] = 0x25;
-			OWire.OWWriteBuffer[4] = 0x00;
-			OWire.OWWriteBuffer[5] = 0x09;
-			OWire.OWWriteBuffer[6] = 0x00;
-			OWire.OWWriteBuffer[7] = 0x00;
-			OWire.OWWriteBuffer[8] = 0x72;
-			OWire.OWWriteBuffer[9] = SCRATCHPAD_READ; // Odczytanie temperatury z rejestru
-
-			OWire.OWWriteDataLen = 10; // Wysylamy 10 bajtow, 1 bajt to komenda 1Wire, 8 bajtow to kod ROM, ostatnia komenda to odczyt temperatury.
-			OWire.OWReadDataLen = 9; // Odbiermy 9 bajtow, zamiast 9 mozna odebrac tylko 2 z temperatura, ale nie bedzie wtedy mozliwosci sprawdzenia CRC
-
-			TempRead = 0;
-
-			OWStartCom(&OWire);
-		}
-
-		SysCnt = 0;
-	} else SysCnt++;
-}
-
-void OWireReadEnd(const uint8_t * data, uint8_t len) {
-	GPIOD->ODR ^= (1 << 12);
-
-	/*
-	 * data[0] - LSB temperatury;
-	 * data[1] - MSB temperatury;
-	 */
-
-	if (CRC_8(data, 8, data[8])) { // 8 bajt to CRC
-		int16_t temperatureData = (data[1] << 8) + data[0];
-		DS18B20Temp = temperatureData * 0.0625; // Rodzielczosc podstawowa 12 bitow, zmiana temperatury co 1/16 stopnia celcsjusza
-	}
-}
-
-void OWireNoSlaves() {
-	GPIOD->BSRRL = (1 << 14);
 }
 
 static void flash_latency(uint32_t frequency)

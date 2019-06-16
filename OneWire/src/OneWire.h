@@ -12,9 +12,9 @@
 
 #define CPU_FREQ 84000000;
 #define OWPort GPIOD;
-#define OWPin (1 << 7);
-#define OWLow
-#define OWHigh
+#define OWPin (1 << 7)
+#define OWLow GPIOD->BSRRH = OWPin
+#define OWHigh GPIOD->BSRRL = OWPin
 
 /*
  * Timingi dla 1-Wire https://www.maximintegrated.com/en/app-notes/index.mvp/id/126
@@ -32,9 +32,7 @@
 
 #define READ_ROM 0x33 // Jezeli na linii jest jeden slave to READ_ROM pozwala na poznanie ID jego rodzinny, kodu ROM oraz kodu CRC
 #define SELECT_SLAVE 0x55 // Pozwala wybrac slave'a na linii podajac najpierw ID rodzinny (DS18B20 0x28), kod ROM i CRC
-#define TEMP_CONV 0x44 // Konwertuj temperature
-#define SCRATCHPAD_READ 0xBE // Odczytaj temperature z rejestru, dla 12 bitow trzeba czekac 750 ms
-#define SCRATCHPAD_WRITE 0x4E // Zapis do rejestru
+#define SKIP_ROM 0xCC // Jezeli na linii znajduje sie tylko jeden slave mozna pominac wybieranie jego adresu
 
 typedef enum {
 	OWIdle = 0,
@@ -57,11 +55,12 @@ typedef enum {
 } OneWireOperation;
 
 typedef struct {
-	void (*OWReadEnd)(const uint8_t * readResults, uint8_t len); // Wskaznik do funkcji wywolywanej, gdy wszystkie dane zostaly odczytane
+	void (*OWReadEnd)(const uint8_t * readResults, const uint8_t len, const uint8_t ROMCmd, const uint8_t DeviceCMD); // Wskaznik do funkcji wywolywanej, gdy wszystkie dane zostaly odczytane
+	void (*OWWriteEnd)(const uint8_t ROMCmd, const uint8_t DeviceCMD);
 	void (*OWNoSlaves)(); // Wskaznik do funkcji wywolywanej, gdy zaden uklad podrzedny nie zostaly znaleziony
 	uint8_t OWState; // Obecny stan w jakim znajduje sie automat
 	uint8_t OWCommand; // Obecny tryb pracy zapis / odczyt / czekanie
-	uint8_t OWSlaveID; // Obecnie obslugiwany slave
+	uint8_t OWROMCmd, OWDeviceCmd;
 	uint8_t OWWriteID;
 	uint8_t OWReadID;
 	uint8_t OWShiftedBit;
@@ -71,7 +70,7 @@ typedef struct {
 	uint8_t OWReadDataLen;
 } OneWire;
 
-void OWInit(OneWire * OWire, void (*OWReadCallback)(const uint8_t *, uint8_t), void (*OWNoSlavesCallback)());
+void OWInit(OneWire * OWire, void (*OWReadCallback)(const uint8_t *,  const uint8_t, const uint8_t, const uint8_t), void (*OWNoSlavesCallback)(), void (*OWWriteEnd)(const uint8_t ROMCmd, const uint8_t DeviceCMD));
 
 void OWResetCom(OneWire * OWire);
 

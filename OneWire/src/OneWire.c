@@ -11,11 +11,13 @@ uint16_t OWCycleCnt = 0x00;
 
 OneWire * OWirePt = 0;
 
-void OWInit(OneWire * OWire, void (*OWReadCallback)(const uint8_t *, uint8_t), void (*OWNoSlavesCallback)()) {
+void OWInit(OneWire * OWire, void (*OWReadCallback)(const uint8_t *, const uint8_t, const uint8_t, const uint8_t), void (*OWNoSlavesCallback)(), void (*OWWriteEndCallback)(const uint8_t, const uint8_t)) {
 	OWirePt = OWire;
 	OWirePt->OWReadEnd = OWReadCallback;
 	OWirePt->OWNoSlaves = OWNoSlavesCallback;
+	OWirePt->OWWriteEnd = OWWriteEndCallback;
 
+	GPIOD->BSRRL = OWPin;
 	GPIOD->MODER |= GPIO_MODER_MODER7_0; // Wyjscie
 	GPIOD->OTYPER |= GPIO_OTYPER_ODR_7; // Otwarty dren
 	GPIOD->OSPEEDR = GPIO_OSPEEDER_OSPEEDR7; // Ustaw najwyzsza "czestotliwosc" taktowania pinu 7 (100 MHz)
@@ -36,25 +38,15 @@ void OWResetCom(OneWire * OWire) {
 	OWire->OWWriteID = 0;
 	OWire->OWReadID = 0;
 	OWire->OWShiftedBit = 0;
-
-	for (uint8_t i = 0; i < OWire->OWWriteDataLen; i++) {
-		OWire->OWWriteBuffer[i] = 0; // Mozna by pominac czyszczenie buffora
-	}
-
-	for (uint8_t i = 0; i < OWire->OWReadDataLen; i++) {
-		OWire->OWReadBuffer[i] = 0; // Mozna by pominac czyszczenie buffora
-	}
-
 	OWire->OWReadDataLen = 0;
 	OWire->OWWriteDataLen = 0;
+	OWire->OWDeviceCmd = 0;
 }
 
 void OWStartCom(OneWire * OWire) {
 	OWire->OWState = OWIdle;
 	OWire->OWCommand = OWWrite;
-	OWire->OWWriteID = 0;
-	OWire->OWReadID = 0;
-	OWire->OWShiftedBit = 0;
+	OWire->OWROMCmd = OWire->OWWriteBuffer[0];
 
 	TIM1->CR1 |= TIM_CR1_CEN;
 
@@ -67,6 +59,8 @@ void OWStopCom(OneWire * OWire) {
 
 	NVIC_DisableIRQ(TIM1_UP_TIM10_IRQn);
 }
+
+uint8_t dataCRC = 0;
 
 uint8_t CRC_8(const uint8_t * data, uint8_t len, uint8_t _CRC) {
 	uint8_t dataCRC = 0, nextByte, mixByte;
@@ -93,14 +87,14 @@ void TIM1_UP_TIM10_IRQHandler(void){
 			case OWIdle: {
 				OWirePt->OWState = OWStart;
 
-				GPIOD->BSRRH = OWPin;
+				OWLow;
 			} break;
 			case OWStart: {
 				if (OWCycleCnt >= TIM_H) {
 					OWirePt->OWState = OWPresencePulse;
 					OWCycleCnt = 0;
 
-					GPIOD->BSRRL = OWPin; // Wyzeruj stan wejscia do stanu poczatkowego
+					OWHigh; // Wyzeruj stan wejscia do stanu poczatkowego
 				} else OWCycleCnt++;
 			} break;
 			case OWPresencePulse: { // Czekamy na odpowiedz od przynajmniej jednego ukladu podrzednego
@@ -136,12 +130,13 @@ void TIM1_UP_TIM10_IRQHandler(void){
 									OWirePt->OWState = OWReadBitStart;
 									OWirePt->OWShiftedBit = 0;
 
+									OWirePt->OWWriteEnd(OWirePt->OWROMCmd, OWirePt->OWDeviceCmd);
+
 									break;
 								} else {
+									OWirePt->OWWriteEnd(OWirePt->OWROMCmd, OWirePt->OWDeviceCmd);
+
 									OWStopCom(OWirePt);
-
-									GPIOD->BSRRL = (1 << 15);
-
 									break;
 								}
 							}
@@ -159,8 +154,8 @@ void TIM1_UP_TIM10_IRQHandler(void){
 								OWirePt->OWReadID++;
 								OWirePt->OWShiftedBit = 0;
 							} else {
-								GPIOD->BSRRL = OWPin;
-								OWirePt->OWReadEnd(OWirePt->OWReadBuffer, OWirePt->OWReadDataLen);
+								OWHigh;
+								OWirePt->OWReadEnd(OWirePt->OWReadBuffer, OWirePt->OWReadDataLen, OWirePt->OWROMCmd, OWirePt->OWDeviceCmd);
 
 								OWStopCom(OWirePt);
 
@@ -173,11 +168,11 @@ void TIM1_UP_TIM10_IRQHandler(void){
 				}
 			} break;
 			case OWWriteBit0: {
-				GPIOD->BSRRH = OWPin; // Wystaw stan niski na pin 1Wire
+				OWLow; // Wystaw stan niski na pin 1Wire
 				if (OWCycleCnt >= TIM_C) {
 					OWCycleCnt = 0;
 
-					GPIOD->BSRRL = OWPin; // Powrot do stanu wysokiego
+					OWHigh; // Powrot do stanu wysokiego
 
 					OWirePt->OWState = OWWriteBit0_H;
 				} else OWCycleCnt++;
@@ -190,13 +185,13 @@ void TIM1_UP_TIM10_IRQHandler(void){
 				} else OWCycleCnt++;
 			} break;
 			case OWWriteBit1: {
-				GPIOD->BSRRH = OWPin; // Wystaw stan niski na pin 1Wire
+				OWLow; // Wystaw stan niski na pin 1Wire
 				if (OWCycleCnt >= TIM_A) {
 					OWCycleCnt = 0;
 
 					OWirePt->OWState = OWWriteBit1_H;
 
-					GPIOD->BSRRL = OWPin; // Powrot do stanu wysokiego
+					OWHigh; // Powrot do stanu wysokiego
 				} else OWCycleCnt++;
 			} break;
 			case OWWriteBit1_H: {
@@ -207,10 +202,10 @@ void TIM1_UP_TIM10_IRQHandler(void){
 				} else OWCycleCnt++;
 			} break;
 			case OWReadBitStart: {
-				GPIOD->BSRRH = OWPin;
+				OWLow;
 
 				if (OWCycleCnt >= TIM_E) {
-					GPIOD->BSRRL = OWPin
+					OWHigh;
 					OWirePt->OWState = OWReadBitEnd;
 
 					OWCycleCnt = 0;
@@ -221,12 +216,17 @@ void TIM1_UP_TIM10_IRQHandler(void){
 
 					if (GPIOD->IDR & GPIO_IDR_IDR_7) {
 						OWirePt->OWReadBuffer[OWirePt->OWReadID] |= 0x01 << OWirePt->OWShiftedBit++; // Odczytana zostala jedynka
-					} else OWirePt->OWShiftedBit++;
+					} else OWirePt->OWReadBuffer[OWirePt->OWReadID] &= ~(0x01 << OWirePt->OWShiftedBit++); // Zero, mozna by pominac zapisywanie 0, czyszczac bufor odczytanym danych za kazdym uruchomieniem komunikacji
 
 					OWCycleCnt = 0;
 
 					OWirePt->OWState = OWMasterOperation;
 				} else OWCycleCnt++;
+			} break;
+			default: {
+				OWStopCom(OWirePt);
+
+				OWHigh;
 			} break;
 	    }
 
